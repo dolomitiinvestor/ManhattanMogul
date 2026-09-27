@@ -42,6 +42,7 @@ function setRent(set) {
 class Game {
   constructor(code) {
     this.code = code;
+    this.name = '';
     this.phase = 'lobby';
     this.players = [];
     this.hostId = null;
@@ -96,6 +97,8 @@ class Game {
         this.turnIdx = this.turnIdx % this.players.length;
         this.pending = null;
         this.startTurn();
+      } else {
+        this.autoEndTurn();
       }
     } else {
       this.players.splice(idx, 1);
@@ -124,6 +127,12 @@ class Game {
     this.addLog(`Game started with ${this.players.length} players${copies > 1 ? ` (${copies} decks)` : ''}.`);
     this.startTurn();
     this.seq++;
+  }
+
+  rename(byId, name) {
+    if (byId !== this.hostId) fail('Only the host can name the game');
+    this.name = String(name || '').trim().slice(0, 30);
+    this.addLog(this.name ? `Game named "${this.name}".` : 'Game name cleared.');
   }
 
   backToLobby(byId) {
@@ -293,6 +302,7 @@ class Game {
     if (!p) fail('You are not in this game');
     const handlers = {
       start: () => this.start(playerId),
+      rename: () => this.rename(playerId, msg.name),
       backToLobby: () => this.backToLobby(playerId),
       bank: () => this.cmdBank(p, msg),
       property: () => this.cmdProperty(p, msg),
@@ -308,6 +318,7 @@ class Game {
     if (!h) fail('Unknown command');
     h();
     this.checkWinner();
+    this.autoEndTurn();
     this.seq++;
   }
 
@@ -343,6 +354,12 @@ class Game {
     this.removeProperty(p, cardId);
     this.addProperty(p, found.card, color);
     this.addLog(`${p.name} moved ${found.card.name} to ${COLORS[color].name}.`);
+  }
+
+  // Once the last play is used (and any responses are settled), the turn ends by itself.
+  autoEndTurn() {
+    if (this.phase !== 'playing' || this.playsLeft > 0 || this.pending || this.discardNeeded) return;
+    this.cmdEndTurn(this.current);
   }
 
   cmdEndTurn(p) {
@@ -653,6 +670,7 @@ class Game {
     const cur = this.phase === 'playing' ? this.current : null;
     return {
       code: this.code,
+      name: this.name || '',
       seq: this.seq,
       phase: this.phase,
       you: playerId,
