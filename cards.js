@@ -18,8 +18,8 @@ const COLORS = {
 
 // Property cards: one entry per card.
 const PROPERTIES = [
-  { color: 'brown', value: 1, name: 'Mediterranean Avenue' },
-  { color: 'brown', value: 1, name: 'Baltic Avenue' },
+  { color: 'brown', value: 1, name: 'Park Slope' },
+  { color: 'brown', value: 1, name: 'Red Hook' },
   { color: 'lightBlue', value: 1, name: 'Williamsburg' },
   { color: 'lightBlue', value: 1, name: 'Greenpoint' },
   { color: 'lightBlue', value: 1, name: 'Buschwick' },
