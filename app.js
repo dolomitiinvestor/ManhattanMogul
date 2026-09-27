@@ -1,11 +1,10 @@
-// Manhattan Mogul client. Renders server state; every rule is enforced server-side.
+// Manhattan Mogul client. The host's browser runs the engine (game.js); everyone renders the state it sends.
 (() => {
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const M = (n) => `$${n}M`;
 
-  let ws = null;
-  let S = null;              // latest state from server
+  let S = null;              // latest state from the host
   let rejoining = false;
   const ui = {
     modal: null,             // user-opened dialog/wizard
@@ -18,55 +17,285 @@
     lastLogN: 0,
   };
 
-  // ---------- session ----------
+  // ---------- session (per tab, survives reloads) ----------
+  const store = {
+    get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k) { try { sessionStorage.removeItem(k); } catch {} },
+  };
   const session = {
-    load() { try { return JSON.parse(localStorage.getItem('mm-session')); } catch { return null; } },
-    save(code, token) { try { localStorage.setItem('mm-session', JSON.stringify({ code, token })); } catch {} },
-    clear() { try { localStorage.removeItem('mm-session'); } catch {} },
+    load: () => store.get('mm-session'),
+    save: (v) => store.set('mm-session', v),
+    clear: () => { store.del('mm-session'); store.del('mm-host-game'); },
   };
   const savedName = () => { try { return localStorage.getItem('mm-name') || ''; } catch { return ''; } };
   const saveName = (n) => { try { localStorage.setItem('mm-name', n); } catch {} };
 
-  // ---------- networking ----------
-  function connect() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}`);
-    ws.onopen = () => {
-      $('#conn').classList.add('hidden');
-      const s = session.load();
-      if (s) { rejoining = true; raw({ type: 'join', code: s.code, token: s.token, name: savedName() }); }
-    };
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === 'joined') {
-        rejoining = false;
-        session.save(msg.code, msg.token);
-        const url = new URL(location.href);
-        url.searchParams.set('room', msg.code);
-        history.replaceState(null, '', url);
-      } else if (msg.type === 'state') {
-        onState(msg.state);
-      } else if (msg.type === 'error') {
-        if (rejoining) { rejoining = false; session.clear(); S = null; render(); }
-        toast(msg.message, 'err');
-      } else if (msg.type === 'chat') {
-        ui.chat.push({ from: msg.from, text: msg.text });
-        renderLog();
-        if ($('#side').classList.contains('hidden')) toast(`💬 ${msg.from}: ${msg.text}`);
-      } else if (msg.type === 'kicked' || msg.type === 'left') {
-        if (msg.type === 'kicked') toast('You were removed from the game', 'err');
-        session.clear(); S = null; ui.modal = null;
-        const url = new URL(location.href); url.searchParams.delete('room'); history.replaceState(null, '', url);
-        render();
-      }
-    };
-    ws.onclose = () => {
-      $('#conn').classList.remove('hidden');
-      setTimeout(connect, 1500);
-    };
+  // ---------- networking (peer-to-peer) ----------
+  // The host's browser runs the game engine. Other players connect to it
+  // directly with WebRTC (PeerJS); the free public PeerJS server is only used
+  // to find each other. Add ?peer=host:port to use your own PeerJS server.
+  const PEER_PREFIX = 'manhattan-mogul-v1-';
+  const PARAMS = new URLSearchParams(location.search);
+  const peerOpts = (() => {
+    const p = PARAMS.get('peer');
+    if (!p) return {};
+    const [host, port] = p.split(':');
+    return { host, port: Number(port) || 9000, path: '/', secure: location.protocol === 'https:' };
+  })();
+  const { Game, GameError } = window.MMGame;
+  const net = { role: null, peer: null, conn: null, game: null, conns: new Map(), myId: null, code: null, name: '', retry: null, attempts: 0 };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const newToken = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
+
+  function showConn(text) {
+    $('#conn').textContent = text || '';
+    $('#conn').classList.toggle('hidden', !text);
   }
-  const raw = (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); else toast('Not connected', 'err'); };
+
+  function onMessage(msg) {
+    if (msg.type === 'joined') {
+      rejoining = false;
+      net.attempts = 0;
+      session.save({ role: net.role, code: msg.code, token: msg.token });
+      const url = new URL(location.href);
+      url.searchParams.set('room', msg.code);
+      history.replaceState(null, '', url);
+    } else if (msg.type === 'state') {
+      onState(msg.state);
+    } else if (msg.type === 'error') {
+      if (rejoining) { rejoining = false; resetNet(); }
+      toast(msg.message, 'err');
+    } else if (msg.type === 'chat') {
+      ui.chat.push({ from: msg.from, text: msg.text });
+      renderLog();
+      if ($('#side').classList.contains('hidden')) toast(`💬 ${msg.from}: ${msg.text}`);
+    } else if (msg.type === 'kicked' || msg.type === 'left' || msg.type === 'hostLeft') {
+      if (msg.type === 'kicked') toast('You were removed from the game', 'err');
+      if (msg.type === 'hostLeft') toast('The host ended the game', 'err');
+      resetNet();
+    }
+  }
+
+  // Back to the home screen, dropping all connections.
+  function resetNet() {
+    clearTimeout(net.retry);
+    const peer = net.peer;
+    Object.assign(net, { role: null, peer: null, conn: null, game: null, conns: new Map(), myId: null, code: null, attempts: 0 });
+    if (peer) setTimeout(() => peer.destroy(), 300);
+    session.clear();
+    S = null; ui.modal = null; ui.chat = [];
+    showConn(null);
+    const url = new URL(location.href); url.searchParams.delete('room'); history.replaceState(null, '', url);
+    render();
+  }
+
+  function raw(obj) {
+    if (net.role === 'host') hostHandle('local', obj);
+    else if (net.role === 'guest' && net.conn && net.conn.open) net.conn.send(obj);
+    else toast('Not connected to the host yet', 'err');
+  }
   const cmd = (obj) => { ui.modal = null; raw({ type: 'cmd', ...obj }); };
+
+  function openPeer(id) {
+    return new Promise((resolve, reject) => {
+      const peer = id ? new Peer(id, peerOpts) : new Peer(peerOpts);
+      const onErr = (e) => { peer.off('open', onOpen); peer.destroy(); reject(e); };
+      const onOpen = () => { peer.off('error', onErr); resolve(peer); };
+      peer.once('open', onOpen);
+      peer.once('error', onErr);
+    });
+  }
+
+  // ----- host side -----
+  function newCode() {
+    const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    return Array.from({ length: 4 }, () => letters[Math.floor(Math.random() * letters.length)]).join('');
+  }
+
+  async function hostStart(name, saved) {
+    showConn(saved ? 'Restoring your game…' : 'Creating game…');
+    let peer = null, code = saved ? saved.code : newCode();
+    for (let tries = 0; !peer; tries++) {
+      try {
+        peer = await openPeer(PEER_PREFIX + code);
+      } catch (e) {
+        if (e.type === 'unavailable-id' && tries < 8) {
+          if (saved) await sleep(2000); else code = newCode();
+          continue;
+        }
+        showConn(null);
+        toast(e.type === 'network' || e.type === 'server-error' || e.type === 'socket-error'
+          ? 'Could not reach the connection server. Check your internet and try again.'
+          : `Could not start the game (${e.type || e.message})`, 'err');
+        if (saved) session.clear();
+        return;
+      }
+    }
+    showConn(null);
+    const g = new Game(code);
+    if (saved) {
+      Object.assign(g, saved.game);
+      const token = session.load()?.token;
+      const mine = g.players.find((p) => p.token === token);
+      net.myId = mine ? mine.id : g.hostId;
+      for (const p of g.players) p.connected = p.id === net.myId;
+    } else {
+      net.myId = g.addPlayer(name, newToken()).id;
+    }
+    Object.assign(net, { role: 'host', peer, game: g, code, conns: new Map() });
+    peer.on('connection', (conn) => {
+      conn.on('data', (msg) => hostHandle(conn, msg));
+      conn.on('close', () => hostDetach(conn));
+      conn.on('error', () => hostDetach(conn));
+    });
+    peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => peer.reconnect(), 1000); });
+    peer.on('error', (e) => console.warn('peer error', e.type));
+    const me = g.player(net.myId);
+    onMessage({ type: 'joined', code, playerId: me.id, token: me.token });
+    hostBroadcast();
+  }
+
+  function deliver(to, msg) {
+    if (to === 'local') queueMicrotask(() => onMessage(msg));
+    else if (to.open) to.send(msg);
+  }
+
+  function hostBroadcast() {
+    const g = net.game;
+    for (const [conn, pid] of net.conns) if (conn.open) conn.send({ type: 'state', state: g.viewFor(pid) });
+    deliver('local', { type: 'state', state: g.viewFor(net.myId) });
+    store.set('mm-host-game', { code: net.code, game: g });
+  }
+
+  function hostHandle(from, msg) {
+    const g = net.game;
+    if (!g || !msg || typeof msg !== 'object') return;
+    try {
+      const pid = from === 'local' ? net.myId : net.conns.get(from);
+      if (msg.type === 'join' && from !== 'local') {
+        let player = msg.token && g.players.find((p) => p.token === msg.token);
+        if (!player) player = g.addPlayer(msg.name, newToken());
+        // Drop any older connection for the same player (e.g. a stale tab).
+        for (const [c, id] of net.conns) if (id === player.id && c !== from) { net.conns.delete(c); c.close(); }
+        net.conns.set(from, player.id);
+        player.connected = true;
+        g.seq++;
+        deliver(from, { type: 'joined', code: g.code, playerId: player.id, token: player.token });
+        hostBroadcast();
+        return;
+      }
+      if (!pid) throw new GameError('Join the game first');
+      if (msg.type === 'leave') {
+        if (from === 'local') {
+          for (const c of net.conns.keys()) deliver(c, { type: 'hostLeft' });
+          resetNet();
+          return;
+        }
+        g.removePlayer(pid);
+        net.conns.delete(from);
+        deliver(from, { type: 'left' });
+        setTimeout(() => from.close(), 300);
+        hostBroadcast();
+        return;
+      }
+      if (msg.type === 'kick') {
+        if (from !== 'local') throw new GameError('Only the host can remove players');
+        const target = g.player(msg.playerId);
+        if (!target || target.id === net.myId) throw new GameError('Invalid player');
+        g.removePlayer(target.id);
+        for (const [c, id] of net.conns) if (id === target.id) { deliver(c, { type: 'kicked' }); net.conns.delete(c); setTimeout(() => c.close(), 300); }
+        hostBroadcast();
+        return;
+      }
+      if (msg.type === 'chat') {
+        const p = g.player(pid);
+        const text = String(msg.text || '').trim().slice(0, 200);
+        if (!p || !text) return;
+        const out = { type: 'chat', from: p.name, text };
+        for (const c of net.conns.keys()) deliver(c, out);
+        deliver('local', out);
+        return;
+      }
+      if (msg.type === 'cmd') {
+        g.handle(pid, msg);
+        hostBroadcast();
+      }
+    } catch (e) {
+      if (!(e instanceof GameError)) console.error(e);
+      deliver(from, { type: 'error', message: e instanceof GameError ? e.message : 'Something went wrong' });
+    }
+  }
+
+  function hostDetach(conn) {
+    const g = net.game;
+    const pid = net.conns.get(conn);
+    if (!g || !pid) return;
+    net.conns.delete(conn);
+    if ([...net.conns.values()].includes(pid)) return;
+    const p = g.player(pid);
+    if (!p) return;
+    p.connected = false;
+    if (g.phase === 'lobby') g.removePlayer(pid);
+    g.seq++;
+    hostBroadcast();
+  }
+
+  // ----- guest side -----
+  function guestStart(code, name) {
+    Object.assign(net, { role: 'guest', code, name, attempts: 0 });
+    showConn('Connecting to host…');
+    guestConnect();
+  }
+
+  function guestConnect() {
+    if (net.role !== 'guest') return;
+    if (!net.peer || net.peer.destroyed) {
+      openPeer(null).then((peer) => {
+        if (net.role !== 'guest') { peer.destroy(); return; }
+        net.peer = peer;
+        peer.on('error', onGuestError);
+        peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => peer.reconnect(), 1000); });
+        guestDial();
+      }, () => guestRetry());
+    } else if (net.peer.open) {
+      guestDial();
+    } else {
+      guestRetry();
+    }
+  }
+
+  function guestDial() {
+    const conn = net.peer.connect(PEER_PREFIX + net.code, { reliable: true, serialization: 'json' });
+    net.conn = conn;
+    conn.on('open', () => {
+      showConn(null);
+      const s = session.load();
+      conn.send({ type: 'join', name: net.name, token: s && s.code === net.code ? s.token : undefined });
+    });
+    conn.on('data', onMessage);
+    conn.on('close', () => { if (net.conn === conn) { net.conn = null; guestRetry(); } });
+  }
+
+  function guestRetry() {
+    if (net.role !== 'guest') return;
+    showConn('Reconnecting to host…');
+    clearTimeout(net.retry);
+    net.retry = setTimeout(guestConnect, 2500);
+  }
+
+  function onGuestError(e) {
+    if (e.type === 'peer-unavailable') {
+      // Host not online. Keep trying if we were already in a game (host may be reloading).
+      net.attempts++;
+      if (S || (rejoining && net.attempts < 6)) return guestRetry();
+      toast('No game found with that code. The host must keep their game page open.', 'err');
+      rejoining = false;
+      resetNet();
+      return;
+    }
+    guestRetry();
+  }
 
   // ---------- state helpers ----------
   const me = () => S && S.players.find((p) => p.id === S.you);
@@ -208,9 +437,18 @@
     </div>`;
   }
 
+  function shareLink() {
+    const url = new URL(location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('room', S.code);
+    if (PARAMS.get('peer')) url.searchParams.set('peer', PARAMS.get('peer'));
+    return url.href;
+  }
+
   function lobbyHTML() {
     const isHost = S.hostId === S.you;
-    const link = `${location.origin}${location.pathname}?room=${S.code}`;
+    const link = shareLink();
     return `<div class="home lobby">
       <h2>Game lobby</h2>
       <div class="code-box"><small>Room code</small><div class="code">${esc(S.code)}</div></div>
@@ -223,6 +461,7 @@
         ${isHost
           ? `<button class="btn primary big" data-a="start" ${S.players.length < S.config.rules.minPlayers ? 'disabled' : ''}>${S.players.length < S.config.rules.minPlayers ? 'Waiting for players…' : 'Start game'}</button>`
           : '<p class="sub">Waiting for the host to start…</p>'}
+        ${isHost ? '<p class="sub small">You are hosting: the game runs in this tab. Keep it open until the game ends. Refreshing is OK.</p>' : ''}
       </div>
       <div class="row center"><button class="btn link" data-a="rules">How to play</button><button class="btn link" data-a="leave">Leave</button></div>
     </div>`;
@@ -644,7 +883,7 @@
         const name = $('#name').value.trim();
         if (!name) { toast('Enter your name first', 'err'); $('#name').focus(); return; }
         saveName(name);
-        raw({ type: 'create', name });
+        hostStart(name, null);
         break;
       }
       case 'join': {
@@ -653,21 +892,21 @@
         if (!name) { toast('Enter your name first', 'err'); $('#name').focus(); return; }
         if (code.length !== 4) { toast('Enter the 4-letter room code', 'err'); return; }
         saveName(name);
-        const s = session.load();
-        raw({ type: 'join', code, name, token: s && s.code === code ? s.token : undefined });
+        guestStart(code, name);
         break;
       }
       case 'start': cmd({ cmd: 'start' }); break;
       case 'backLobby': cmd({ cmd: 'backToLobby' }); break;
       case 'leave':
-        if (S && S.phase === 'playing' && !confirm('Leave the game? Your cards will be discarded.')) return;
+        if (net.role === 'host' && !confirm('You are the host. Leaving ends the game for everyone. Leave?')) return;
+        if (net.role !== 'host' && S && S.phase === 'playing' && !confirm('Leave the game? Your cards will be discarded.')) return;
         raw({ type: 'leave' });
         break;
       case 'kick':
         if (confirm(`Remove ${pl(id)?.name} from the game?`)) raw({ type: 'kick', playerId: id });
         break;
       case 'copyLink': {
-        const link = `${location.origin}${location.pathname}?room=${S.code}`;
+        const link = shareLink();
         if (navigator.share && /Mobi/i.test(navigator.userAgent)) navigator.share({ title: 'Join my game', url: link }).catch(() => {});
         else navigator.clipboard?.writeText(link).then(() => toast('Link copied', 'good'), () => toast(link));
         break;
@@ -748,6 +987,17 @@
     setTimeout(() => el.remove(), 3300);
   }
 
+  // Resume after a page reload.
+  (() => {
+    const s = session.load();
+    if (s && s.role === 'host') {
+      const saved = store.get('mm-host-game');
+      if (saved && saved.code === s.code) hostStart(savedName(), saved);
+      else session.clear();
+    } else if (s && s.role === 'guest') {
+      rejoining = true;
+      guestStart(s.code, savedName());
+    }
+  })();
   render();
-  connect();
 })();

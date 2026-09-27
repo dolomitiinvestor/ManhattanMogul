@@ -1,5 +1,6 @@
-// Authoritative game engine. Pure logic: no networking.
-const { COLORS, BUILDING_RENT, RULES, buildDeck } = require('./cards');
+// Authoritative game engine. Pure logic: no networking. Runs in the host's browser.
+(() => {
+const { COLORS, BUILDING_RENT, RULES, buildDeck } = typeof module !== 'undefined' ? require('./cards') : window.MMCards;
 
 class GameError extends Error {}
 const fail = (msg) => { throw new GameError(msg); };
@@ -679,4 +680,6 @@ class Game {
   }
 }
 
-module.exports = { Game, GameError, isComplete, setRent, canBeColor };
+const api = { Game, GameError, isComplete, setRent, canBeColor };
+if (typeof module !== 'undefined') module.exports = api; else window.MMGame = api;
+})();

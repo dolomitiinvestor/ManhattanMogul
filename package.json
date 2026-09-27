@@ -1,18 +1,9 @@
 {
   "name": "manhattan-mogul",
-  "version": "1.0.0",
-  "description": "Multiplayer property-trading card game (Monopoly Deal style) playable across devices",
-  "main": "server/index.js",
-  "scripts": {
-    "start": "node server/index.js",
-    "test": "node test/engine.test.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "license": "UNLICENSED",
+  "version": "2.0.0",
+  "description": "Multiplayer property-trading card game that runs entirely in the browser (peer-to-peer)",
   "private": true,
-  "dependencies": {
-    "ws": "^8.22.0"
+  "scripts": {
+    "test": "node test/engine.test.js"
   }
 }

@@ -1,3 +1,4 @@
+(() => {
 // All game content lives here: rename colors, properties, and actions freely.
 // Changing counts or values changes the deck. Keys (e.g. 'brown', 'slyDeal')
 // are internal ids used by the engine and should stay the same.
@@ -134,4 +135,6 @@ function buildDeck(copies = 1) {
   return deck;
 }
 
-module.exports = { COLORS, ACTIONS, BUILDING_RENT, RULES, buildDeck };
+const api = { COLORS, ACTIONS, BUILDING_RENT, RULES, buildDeck };
+if (typeof module !== 'undefined') module.exports = api; else window.MMCards = api;
+})();

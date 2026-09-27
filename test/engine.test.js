@@ -1,8 +1,8 @@
 // Fuzz test: random bots play many full games. Checks that the engine never
 // crashes, never loses or duplicates cards, and that games finish.
 const assert = require('assert');
-const { Game, GameError, isComplete } = require('../server/game');
-const { COLORS } = require('../server/cards');
+const { Game, GameError, isComplete } = require('../game');
+const { COLORS } = require('../cards');
 
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
