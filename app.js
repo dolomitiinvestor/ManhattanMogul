@@ -15,6 +15,7 @@
     lastTurnKey: null,
     chat: [],
     lastLogN: 0,
+    nameDraft: null,         // host's unsaved game name while typing
   };
 
   // ---------- session (per tab, survives reloads) ----------
@@ -335,7 +336,7 @@
     // Notifications
     const tk = S.turn ? `${S.turn.playerId}:${S.log.length ? S.log[S.log.length - 1].n : 0}` : null;
     if (S.turn && S.turn.playerId === S.you && (!prev || !prev.turn || prev.turn.playerId !== S.you)) {
-      toast("🎲 It's your turn!", 'good');
+      flashTurn();
       if (navigator.vibrate) navigator.vibrate(120);
     }
     ui.lastTurnKey = tk;
@@ -406,11 +407,15 @@
   function render() {
     const app = $('#app');
     const keep = {};
+    const focused = document.activeElement && document.activeElement.id && app.contains(document.activeElement) ? document.activeElement : null;
+    const caret = focused && focused.selectionStart;
     app.querySelectorAll('[data-keep]').forEach((el) => { keep[el.dataset.keep] = [el.scrollLeft, el.scrollTop]; });
     if (!S) app.innerHTML = homeHTML();
     else if (S.phase === 'lobby') app.innerHTML = lobbyHTML();
     else app.innerHTML = gameHTML();
     app.querySelectorAll('[data-keep]').forEach((el) => { const k = keep[el.dataset.keep]; if (k) { el.scrollLeft = k[0]; el.scrollTop = k[1]; } });
+    // Keep typing focus across re-renders (e.g. someone joins while the host is naming the game).
+    if (focused) { const el = document.getElementById(focused.id); if (el) { el.focus(); if (caret != null) try { el.setSelectionRange(caret, caret); } catch {} } }
     $('#side').classList.toggle('in-game', !!S && S.phase !== 'lobby');
     if (!S || S.phase === 'lobby') $('#side').classList.add('hidden');
     renderModal();
@@ -449,8 +454,11 @@
   function lobbyHTML() {
     const isHost = S.hostId === S.you;
     const link = shareLink();
+    const nameVal = ui.nameDraft ?? S.name;
     return `<div class="home lobby">
-      <h2>Game lobby</h2>
+      <h2>${S.name ? esc(S.name) : 'Game lobby'}</h2>
+      ${isHost ? `<div class="share name-row"><input id="game-name" maxlength="30" placeholder="Name this game (optional)" value="${esc(nameVal)}">
+        <button class="btn" data-a="saveName" ${nameVal.trim() === S.name ? 'disabled' : ''}>Save</button></div>` : ''}
       <div class="code-box"><small>Room code</small><div class="code">${esc(S.code)}</div></div>
       <div class="share"><input readonly value="${esc(link)}"><button class="btn" data-a="copyLink">Copy link</button></div>
       <p class="sub">Friends can open the link or enter the code on their own phone or computer.</p>
@@ -513,9 +521,10 @@
     const ordered = [...S.players.slice(myIdx + 1), ...S.players.slice(0, Math.max(0, myIdx))].filter((p) => p.id !== S.you);
     const turnOn = myTurn() && !S.pending && !S.turn.discardNeeded;
     const forced = forcedModal();
+    const canEnd = turnOn;
     return `<div class="game">
       <header class="topbar">
-        <div class="tb-left"><span class="room">${esc(S.code)}</span></div>
+        <div class="tb-left"><span class="room ${S.name ? 'named' : ''}" title="Room code ${esc(S.code)}">${esc(S.name || S.code)}</span></div>
         <div class="tb-mid">
           <span class="pile" title="Draw pile">🂠 ${S.deckCount}</span>
           <span class="pile" title="Discard pile">🗑 ${S.discardCount}${S.discardTop ? ` · ${esc(S.discardTop.name)}` : ''}</span>
@@ -543,9 +552,9 @@
         <div class="my-bank" data-keep="bank">${m.bank.length ? m.bank.map((c) => cardHTML(c, { mini: true })).join('') : '<span class="muted">Bank is empty</span>'}</div>
       </section>
       <section class="handbar">
-        <div class="hand" data-keep="hand">${S.hand.map((c) => cardHTML(c, { a: 'hand' })).join('') || '<span class="muted">No cards in hand</span>'}</div>
+        <div class="hand" data-keep="hand">${S.hand.map((c) => cardHTML(c, { a: 'hand' })).join('')}${canEnd ? '<div class="card end-card clickable" data-a="endTurn"><span>End turn</span></div>' : ''}${S.hand.length || canEnd ? '' : '<span class="muted">No cards in hand</span>'}</div>
         <div class="hand-actions">
-          ${myTurn() && !S.pending && !S.turn.discardNeeded ? `<button class="btn ${S.turn.playsLeft === 0 ? 'primary pulse' : ''}" data-a="endTurn">End turn</button>` : ''}
+          ${canEnd ? `<button class="btn ${S.turn.playsLeft === 0 ? 'primary pulse' : ''}" data-a="endTurn">End turn</button>` : ''}
           <span class="muted small">${S.hand.length} card${S.hand.length === 1 ? '' : 's'}</span>
         </div>
       </section>
@@ -896,6 +905,7 @@
         break;
       }
       case 'start': cmd({ cmd: 'start' }); break;
+      case 'saveName': saveGameName(); break;
       case 'backLobby': cmd({ cmd: 'backToLobby' }); break;
       case 'leave':
         if (net.role === 'host' && !confirm('You are the host. Leaving ends the game for everyone. Leave?')) return;
@@ -966,8 +976,22 @@
 
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && ui.modal) { ui.modal = null; renderModal(); }
+    if (ev.key === 'Enter' && ev.target.id === 'game-name') saveGameName();
     if (ev.key === 'Enter' && ev.target.id === 'code') document.querySelector('[data-a="join"]')?.click();
   });
+
+  document.addEventListener('input', (ev) => {
+    if (ev.target.id !== 'game-name') return;
+    ui.nameDraft = ev.target.value;
+    const btn = document.querySelector('[data-a="saveName"]');
+    if (btn) btn.disabled = ev.target.value.trim() === S.name;
+  });
+
+  function saveGameName() {
+    const name = (ui.nameDraft ?? S.name).trim();
+    ui.nameDraft = null;
+    if (name !== S.name) raw({ type: 'cmd', cmd: 'rename', name });
+  }
 
   $('#chat-form').addEventListener('submit', (ev) => {
     ev.preventDefault();
@@ -985,6 +1009,16 @@
     $('#toasts').appendChild(el);
     setTimeout(() => el.classList.add('out'), 2800);
     setTimeout(() => el.remove(), 3300);
+  }
+
+  // Big "Your turn" banner that flashes over the board.
+  function flashTurn() {
+    document.querySelector('.turn-flash')?.remove();
+    const el = document.createElement('div');
+    el.className = 'turn-flash';
+    el.innerHTML = '<span>Your turn!</span>';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1900);
   }
 
   // Resume after a page reload.
