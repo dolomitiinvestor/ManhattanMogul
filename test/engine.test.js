@@ -140,3 +140,36 @@ assert(finished > N * 0.8, 'too few games finished');
   assert.strictEqual(a.bank.reduce((s, c) => s + c.value, 0), 15);
   console.log('Just Say No chain + doubled rent scenario OK.');
 }
+
+// Turn ends by itself after the 3rd play, but only once responses are settled.
+{
+  const g = new Game('T3');
+  const a = g.addPlayer('A', 'a'), b = g.addPlayer('B', 'b');
+  g.start(g.hostId);
+  g.players = [a, b]; g.turnIdx = 0; g.pending = null; g.playsLeft = 3; g.discardNeeded = 0;
+  a.hand = []; b.hand = []; a.sets = []; b.sets = []; a.bank = []; b.bank = [];
+  const mk = (o) => ({ id: 'y' + Math.random(), ...o });
+  const m1 = mk({ type: 'money', value: 1 }), m2 = mk({ type: 'money', value: 2 });
+  const debt = mk({ type: 'action', action: 'debtCollector', value: 3 });
+  a.hand.push(m1, m2, debt);
+  b.bank.push(mk({ type: 'money', value: 5 }));
+  g.handle(a.id, { cmd: 'bank', cardId: m1.id });
+  g.handle(a.id, { cmd: 'bank', cardId: m2.id });
+  assert.strictEqual(g.current, a);
+  g.handle(a.id, { cmd: 'action', cardId: debt.id, targetId: b.id });
+  assert.strictEqual(g.current, a, 'turn must wait for payment');
+  g.handle(b.id, { cmd: 'pay', cardIds: b.bank.map((c) => c.id) });
+  assert.strictEqual(g.current, b, 'turn should pass after the 3rd play resolves');
+  assert.strictEqual(g.playsLeft, 3);
+  console.log('Auto end turn after 3rd play OK.');
+}
+
+// Host can name the game.
+{
+  const g = new Game('T4');
+  const a = g.addPlayer('A', 'a'), b = g.addPlayer('B', 'b');
+  assert.throws(() => g.handle(b.id, { cmd: 'rename', name: 'Nope' }), GameError);
+  g.handle(a.id, { cmd: 'rename', name: '  Friday Night  ' });
+  assert.strictEqual(g.viewFor(b.id).name, 'Friday Night');
+  console.log('Game naming OK.');
+}
