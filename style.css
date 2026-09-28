@@ -68,6 +68,8 @@ input {
 /* ---------- home / lobby ---------- */
 .home { max-width: 440px; margin: 0 auto; padding: 40px 16px; text-align: center; }
 .home .logo { font-size: 64px; }
+.home .splash { display: block; margin-bottom: 10px; width: 100%; height: auto; border-radius: 16px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .home h1 { margin: 8px 0 4px; font-size: 34px; letter-spacing: 0.5px; }
 .home .sub { color: var(--muted); margin: 6px 0 20px; }
 .panel { background: var(--panel); padding: 20px; border-radius: 14px; display: flex; flex-direction: column; gap: 14px; text-align: left; margin-bottom: 16px; }

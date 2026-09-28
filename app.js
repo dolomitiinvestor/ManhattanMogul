@@ -426,8 +426,8 @@
   function homeHTML() {
     const room = new URLSearchParams(location.search).get('room') || '';
     return `<div class="home">
-      <div class="logo">🏙️</div>
-      <h1>Manhattan Mogul</h1>
+      <img class="splash" src="img/splash.jpg" alt="Manhattan Mogul – The NYC property deal game" width="1024" height="1024">
+      <h1 class="sr-only">Manhattan Mogul</h1>
       <p class="sub">The fast property-trading card game. 2–10 players, any device.</p>
       <div class="panel">
         <label>Your name<input id="name" maxlength="20" value="${esc(savedName())}" placeholder="e.g. Alex"></label>
