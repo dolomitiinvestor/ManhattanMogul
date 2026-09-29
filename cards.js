@@ -74,6 +74,12 @@ const ACTIONS = {
   doubleRent:   { name: 'Rent Increase',  value: 1, count: 2,  desc: 'Play with a Rent card to double the rent. Counts as one of your 3 plays.' },
 };
 
+// Extra action cards only shuffled in when the host turns on "Enhanced" mode.
+const ENHANCED_ACTIONS = {
+  mamdani:      { name: 'Mamdani',   value: 2, count: 2,  desc: 'Everyone (you included) draws 1 card.' },
+  ericAdams:    { name: 'Eric Adams', value: 3, count: 2, desc: 'Draw 3 extra cards.' },
+};
+
 // Rent cards. colors: two color ids (charges all players) or 'any' (charges one player).
 const RENTS = [
   { colors: ['darkBlue', 'green'], value: 1, count: 2 },
@@ -99,13 +105,15 @@ const RULES = {
   debtCollectorAmount: 5,
   birthdayAmount: 2,
   passGoDraw: 2,
+  mamdaniDraw: 1,
+  ericAdamsDraw: 3,
   minPlayers: 2,
   maxPlayers: 10,
   playersPerDeck: 5,    // above this, an extra deck is shuffled in
 };
 
 let nextId = 1;
-function buildDeck(copies = 1) {
+function buildDeck(copies = 1, { enhanced = false } = {}) {
   const deck = [];
   const add = (card) => deck.push({ id: 'c' + nextId++, ...card });
   for (let n = 0; n < copies; n++) {
@@ -119,7 +127,8 @@ function buildDeck(copies = 1) {
         add({ type: 'wild', colors: w.colors, value: w.value, name });
       }
     }
-    for (const [key, a] of Object.entries(ACTIONS)) {
+    const actions = enhanced ? { ...ACTIONS, ...ENHANCED_ACTIONS } : ACTIONS;
+    for (const [key, a] of Object.entries(actions)) {
       for (let i = 0; i < a.count; i++) add({ type: 'action', action: key, value: a.value, name: a.name, desc: a.desc });
     }
     for (const r of RENTS) {
@@ -135,6 +144,6 @@ function buildDeck(copies = 1) {
   return deck;
 }
 
-const api = { COLORS, ACTIONS, BUILDING_RENT, RULES, buildDeck };
+const api = { COLORS, ACTIONS, ENHANCED_ACTIONS, BUILDING_RENT, RULES, buildDeck };
 if (typeof module !== 'undefined') module.exports = api; else window.MMCards = api;
 })();

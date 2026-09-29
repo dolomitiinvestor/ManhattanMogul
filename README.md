@@ -35,6 +35,7 @@ All content lives in **`cards.js`**:
 - `PROPERTIES`: property names and values
 - `WILDS`, `RENTS`, `MONEY`: the card mix
 - `ACTIONS`: action names, descriptions, values and counts
+- `ENHANCED_ACTIONS`: extra cards (Mamdani, Eric Adams) added only when the host turns on **Enhanced** in the lobby
 - `RULES`: hand size, plays per turn, sets to win, and so on
 
 The title is in `index.html` and `homeHTML()` in `app.js`. Edit, commit, and the Pages link updates.
