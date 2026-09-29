@@ -43,6 +43,7 @@ class Game {
   constructor(code) {
     this.code = code;
     this.name = '';
+    this.enhanced = false; // extra cards (Mamdani, Eric Adams)
     this.phase = 'lobby';
     this.players = [];
     this.hostId = null;
@@ -112,7 +113,7 @@ class Game {
     if (this.phase === 'playing') fail('Already started');
     if (this.players.length < RULES.minPlayers) fail(`Need at least ${RULES.minPlayers} players`);
     const copies = Math.ceil(this.players.length / RULES.playersPerDeck);
-    this.deck = shuffle(buildDeck(copies));
+    this.deck = shuffle(buildDeck(copies, { enhanced: this.enhanced }));
     this.discard = [];
     this.pending = null;
     this.winnerId = null;
@@ -124,7 +125,7 @@ class Game {
     }
     this.phase = 'playing';
     this.turnIdx = 0;
-    this.addLog(`Game started with ${this.players.length} players${copies > 1 ? ` (${copies} decks)` : ''}.`);
+    this.addLog(`Game started with ${this.players.length} players${copies > 1 ? ` (${copies} decks)` : ''}${this.enhanced ? ' — Enhanced mode' : ''}.`);
     this.startTurn();
     this.seq++;
   }
@@ -133,6 +134,13 @@ class Game {
     if (byId !== this.hostId) fail('Only the host can name the game');
     this.name = String(name || '').trim().slice(0, 30);
     this.addLog(this.name ? `Game named "${this.name}".` : 'Game name cleared.');
+  }
+
+  setEnhanced(byId, on) {
+    if (byId !== this.hostId) fail('Only the host can change game mode');
+    if (this.phase !== 'lobby') fail('Game mode can only be changed in the lobby');
+    this.enhanced = !!on;
+    this.addLog(`Enhanced mode ${this.enhanced ? 'on' : 'off'}.`);
   }
 
   backToLobby(byId) {
@@ -303,6 +311,7 @@ class Game {
     const handlers = {
       start: () => this.start(playerId),
       rename: () => this.rename(playerId, msg.name),
+      setEnhanced: () => this.setEnhanced(playerId, msg.on),
       backToLobby: () => this.backToLobby(playerId),
       bank: () => this.cmdBank(p, msg),
       property: () => this.cmdProperty(p, msg),
@@ -398,6 +407,8 @@ class Game {
     switch (a) {
       case 'passGo':
       case 'birthday':
+      case 'mamdani':
+      case 'ericAdams':
         break;
       case 'debtCollector':
         t = this.otherPlayer(p, msg.targetId);
@@ -457,6 +468,19 @@ class Game {
       case 'passGo': {
         const n = this.draw(p, RULES.passGoDraw);
         this.addLog(`${p.name} played ${card.name} and drew ${n} cards.`);
+        return;
+      }
+      case 'ericAdams': {
+        const n = this.draw(p, RULES.ericAdamsDraw);
+        this.addLog(`${p.name} played ${card.name} and drew ${n} cards.`);
+        return;
+      }
+      case 'mamdani': {
+        // Start with the player who played it, then go around the table.
+        const i = this.players.indexOf(p);
+        const order = [...this.players.slice(i), ...this.players.slice(0, i)];
+        for (const x of order) this.draw(x, RULES.mamdaniDraw);
+        this.addLog(`${p.name} played ${card.name}: everyone draws ${RULES.mamdaniDraw} card.`);
         return;
       }
       case 'birthday':
@@ -671,6 +695,7 @@ class Game {
     return {
       code: this.code,
       name: this.name || '',
+      enhanced: !!this.enhanced,
       seq: this.seq,
       phase: this.phase,
       you: playerId,

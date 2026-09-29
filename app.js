@@ -467,6 +467,10 @@
         <ul class="plist">${S.players.map((p) => `<li><span class="dot ${p.connected ? 'on' : ''}"></span>${esc(p.name)}${p.id === S.hostId ? ' <em>host</em>' : ''}${p.id === S.you ? ' <em>you</em>' : ''}
           ${isHost && p.id !== S.you ? `<button class="btn tiny" data-a="kick" data-id="${p.id}">remove</button>` : ''}</li>`).join('')}</ul>
         ${isHost
+          ? `<label class="toggle"><input type="checkbox" data-a="toggleEnhanced" ${S.enhanced ? 'checked' : ''}><span class="switch"></span>
+              <span><b>Enhanced</b><small>Adds Mamdani (everyone draws 1) and Eric Adams (draw 3) cards</small></span></label>`
+          : `<p class="sub small">Mode: <b>${S.enhanced ? 'Enhanced' : 'Classic'}</b>${S.enhanced ? ' — includes Mamdani and Eric Adams cards' : ''}</p>`}
+        ${isHost
           ? `<button class="btn primary big" data-a="start" ${S.players.length < S.config.rules.minPlayers ? 'disabled' : ''}>${S.players.length < S.config.rules.minPlayers ? 'Waiting for players…' : 'Start game'}</button>`
           : '<p class="sub">Waiting for the host to start…</p>'}
         ${isHost ? '<p class="sub small">You are hosting: the game runs in this tab. Keep it open until the game ends. Refreshing is OK.</p>' : ''}
@@ -828,13 +832,14 @@
       <p><b>Just Say No</b> cancels any action against you. It can be countered by another Just Say No.</p>
       <p><b>Houses/Hotels</b> go on complete sets (not Railroads/Utilities) and add $3M/$4M rent.</p>
       <p><b>Sly Deal / Forced Deal</b> can't take properties from complete sets. <b>Deal Breaker</b> steals a whole complete set.</p>
+      <p><b>Enhanced mode</b> (host picks in the lobby) adds <b>Mamdani</b> — everyone draws 1 card — and <b>Eric Adams</b> — you draw 3 cards.</p>
     </div>`);
   }
 
   // ---------- events ----------
   function startAction(card) {
     const a = card.action;
-    if (a === 'passGo' || a === 'birthday') return cmd({ cmd: 'action', cardId: card.id });
+    if (a === 'passGo' || a === 'birthday' || a === 'mamdani' || a === 'ericAdams') return cmd({ cmd: 'action', cardId: card.id });
     ui.modal = { kind: 'action', cardId: card.id };
     if (a === 'debtCollector' && S.players.length === 2) {
       return cmd({ cmd: 'action', cardId: card.id, targetId: S.players.find((p) => p.id !== S.you).id });
@@ -905,6 +910,7 @@
         break;
       }
       case 'start': cmd({ cmd: 'start' }); break;
+      case 'toggleEnhanced': cmd({ cmd: 'setEnhanced', on: el.checked }); break;
       case 'saveName': saveGameName(); break;
       case 'backLobby': cmd({ cmd: 'backToLobby' }); break;
       case 'leave':

@@ -66,9 +66,10 @@ function randomCommand(g, p) {
   return msg;
 }
 
-function playGame(nPlayers) {
+function playGame(nPlayers, enhanced = false) {
   const g = new Game('TEST');
   for (let i = 0; i < nPlayers; i++) g.addPlayer('Bot' + i, 't' + i);
+  g.enhanced = enhanced;
   g.start(g.hostId);
   const initial = totalCards(g);
   let steps = 0, errors = 0;
@@ -105,7 +106,7 @@ function playGame(nPlayers) {
 let finished = 0;
 const N = 400;
 for (let i = 0; i < N; i++) {
-  const r = playGame(2 + (i % 7));
+  const r = playGame(2 + (i % 7), i % 2 === 1);
   if (r.finished) finished++;
 }
 console.log(`${finished}/${N} random games reached a winner; no invariant violations.`);
@@ -172,4 +173,36 @@ assert(finished > N * 0.8, 'too few games finished');
   g.handle(a.id, { cmd: 'rename', name: '  Friday Night  ' });
   assert.strictEqual(g.viewFor(b.id).name, 'Friday Night');
   console.log('Game naming OK.');
+}
+
+// Enhanced mode: host-only toggle, extra cards in the deck, and their effects.
+{
+  const g = new Game('T5');
+  const a = g.addPlayer('A', 'a'), b = g.addPlayer('B', 'b'), c = g.addPlayer('C', 'c');
+  assert.throws(() => g.handle(b.id, { cmd: 'setEnhanced', on: true }), GameError);
+  g.handle(a.id, { cmd: 'setEnhanced', on: true });
+  assert.strictEqual(g.viewFor(b.id).enhanced, true);
+  g.start(g.hostId);
+  const all = [...g.deck, ...g.players.flatMap((p) => p.hand)];
+  assert.strictEqual(all.filter((x) => x.action === 'mamdani').length, 2);
+  assert.strictEqual(all.filter((x) => x.action === 'ericAdams').length, 2);
+  assert.throws(() => g.handle(a.id, { cmd: 'setEnhanced', on: false }), GameError);
+
+  g.players = [a, b, c]; g.turnIdx = 0; g.pending = null; g.playsLeft = 3; g.discardNeeded = 0;
+  for (const p of g.players) p.hand = [];
+  const mk = (o) => ({ id: 'z' + Math.random(), ...o });
+  const mam = mk({ type: 'action', action: 'mamdani', value: 2 });
+  const eric = mk({ type: 'action', action: 'ericAdams', value: 3 });
+  a.hand.push(mam, eric);
+  g.handle(a.id, { cmd: 'action', cardId: mam.id });
+  assert.deepStrictEqual(g.players.map((p) => p.hand.length), [2, 1, 1]);
+  g.handle(a.id, { cmd: 'action', cardId: eric.id });
+  assert.strictEqual(a.hand.length, 4);
+  assert.strictEqual(g.playsLeft, 1);
+
+  const classic = new Game('T6');
+  classic.addPlayer('A', 'a'); classic.addPlayer('B', 'b');
+  classic.start(classic.hostId);
+  assert(![...classic.deck, ...classic.players.flatMap((p) => p.hand)].some((x) => x.action === 'mamdani' || x.action === 'ericAdams'));
+  console.log('Enhanced mode OK.');
 }
