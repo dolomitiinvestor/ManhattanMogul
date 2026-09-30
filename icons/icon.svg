@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <defs>
+    <radialGradient id="felt" cx="50%" cy="35%" r="75%">
+      <stop offset="0" stop-color="#1d6b4c"/>
+      <stop offset="1" stop-color="#0a2c21"/>
+    </radialGradient>
+    <linearGradient id="coin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe08a"/>
+      <stop offset="1" stop-color="#e0a82e"/>
+    </linearGradient>
+  </defs>
+  <rect width="180" height="180" fill="url(#felt)"/>
+
+  <!-- rising gold coin -->
+  <circle cx="90" cy="78" r="46" fill="url(#coin)"/>
+  <circle cx="90" cy="78" r="38" fill="none" stroke="#c98f1c" stroke-width="3"/>
+  <text x="90" y="98" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="56" fill="#b07a12">$</text>
+
+  <!-- skyline -->
+  <g fill="#07231a">
+    <rect x="6" y="122" width="22" height="58"/>
+    <rect x="26" y="104" width="20" height="76"/>
+    <rect x="46" y="130" width="16" height="50"/>
+    <!-- Empire-style tower -->
+    <rect x="62" y="96" width="34" height="84"/>
+    <rect x="68" y="84" width="22" height="14"/>
+    <rect x="73" y="74" width="12" height="12"/>
+    <rect x="77.5" y="58" width="3" height="18"/>
+    <rect x="96" y="116" width="18" height="64"/>
+    <!-- Chrysler-ish spire -->
+    <rect x="114" y="100" width="24" height="80"/>
+    <path d="M114 100 L126 72 L138 100 Z"/>
+    <rect x="125" y="60" width="2" height="14"/>
+    <rect x="138" y="126" width="18" height="54"/>
+    <rect x="156" y="112" width="20" height="68"/>
+  </g>
+
+  <!-- top hat on the big tower -->
+  <g transform="rotate(-12 79 60)">
+    <rect x="62" y="56" width="34" height="5" rx="2.5" fill="#111"/>
+    <rect x="68" y="30" width="22" height="27" rx="2" fill="#111"/>
+    <rect x="68" y="49" width="22" height="5" fill="#e5484d"/>
+  </g>
+
+  <!-- lit windows -->
+  <g fill="#f6c343">
+    <rect x="11" y="130" width="4" height="5"/><rect x="19" y="140" width="4" height="5"/>
+    <rect x="11" y="152" width="4" height="5"/>
+    <rect x="31" y="112" width="4" height="5"/><rect x="38" y="124" width="4" height="5"/>
+    <rect x="31" y="146" width="4" height="5"/>
+    <rect x="67" y="104" width="4" height="5"/><rect x="76" y="104" width="4" height="5"/>
+    <rect x="85" y="116" width="4" height="5"/><rect x="67" y="128" width="4" height="5"/>
+    <rect x="76" y="140" width="4" height="5"/><rect x="85" y="152" width="4" height="5"/>
+    <rect x="101" y="124" width="4" height="5"/><rect x="101" y="146" width="4" height="5"/>
+    <rect x="119" y="108" width="4" height="5"/><rect x="128" y="120" width="4" height="5"/>
+    <rect x="119" y="138" width="4" height="5"/>
+    <rect x="143" y="134" width="4" height="5"/><rect x="161" y="120" width="4" height="5"/>
+    <rect x="168" y="142" width="4" height="5"/>
+  </g>
+</svg>
