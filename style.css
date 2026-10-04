@@ -315,3 +315,4 @@ input {
   .hand .card.end-card { display: flex; font-size: 13px; }
   .hand > .muted { grid-column: 1 / -1; }
 }
+#update-btn { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 210; background: var(--gold); color: #1a1a1a; border: 0; border-radius: 999px; padding: 8px 16px; font-size: 14px; font-weight: 700; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); cursor: pointer; }
