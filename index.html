@@ -34,10 +34,6 @@
   <script src="cards.js"></script>
   <script src="game.js"></script>
   <script src="app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
-    }
-  </script>
+  <script src="update.js"></script>
 </body>
 </html>

@@ -44,6 +44,7 @@ The title is in `index.html` and `homeHTML()` in `app.js`. Edit, commit, and the
 
 ```
 index.html, style.css, app.js   the page and UI
+sw.js, update.js                service worker + auto-update check (new pushes load on their own)
 cards.js                        card definitions and rules config
 game.js                         rules engine
 vendor/peerjs.min.js            PeerJS 1.5.4 (MIT)
