@@ -8,7 +8,7 @@
 (() => {
   if (!location.protocol.startsWith('http')) return;
 
-  const FILES = ['index.html', 'style.css', 'cards.js', 'game.js', 'app.js', 'update.js', 'sw.js'];
+  const FILES = ['index.html', 'style.css', 'cards.js', 'game.js', 'relay.js', 'app.js', 'update.js', 'sw.js'];
   const EVERY_MS = 5 * 60 * 1000;
   let baseline = null;   // file contents as of page load
   let blind = false;     // the load-time check failed (offline), so the page may be a stale cached copy

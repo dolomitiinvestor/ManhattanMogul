@@ -23,8 +23,9 @@ Other options:
 ## How it works
 
 - `game.js` holds the full rules engine. It runs in the **host's** browser.
-- Players connect straight to the host over WebRTC, using PeerJS (bundled in `vendor/`).
-- The free public PeerJS server is only used to introduce players to each other. It carries no game data. PeerJS's free TURN relay helps on strict networks.
+- Players connect straight to the host over WebRTC, using PeerJS (bundled in `vendor/`), when their networks allow it.
+- If a direct link can't be made within a few seconds (phones on cellular data, strict Wi-Fi, the PeerJS server being down), the game switches to a relay automatically: `relay.js` sends messages through free public MQTT brokers over secure WebSockets, which works on any network that can load a web page. The host listens on several brokers at once, so one broker being down doesn't stop the game.
+- Relayed messages pass through public brokers and aren't encrypted, so don't put anything private in chat. Add `?transport=relay` to the link to always use the relay.
 - Each player receives only their own hand.
 
 ## Rename things / tweak rules
@@ -47,6 +48,8 @@ index.html, style.css, app.js   the page and UI
 sw.js, update.js                service worker + auto-update check (new pushes load on their own)
 cards.js                        card definitions and rules config
 game.js                         rules engine
+relay.js                        fallback relay when WebRTC can't connect
 vendor/peerjs.min.js            PeerJS 1.5.4 (MIT)
+vendor/mqtt.min.js              MQTT.js 5.10.4 (MIT)
 test/engine.test.js             optional fuzz test for developers: `node test/engine.test.js`
 ```

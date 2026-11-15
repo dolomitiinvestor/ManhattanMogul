@@ -34,10 +34,13 @@
 
   // ---------- networking (peer-to-peer) ----------
   // The host's browser runs the game engine. Other players connect to it
-  // directly with WebRTC (PeerJS); the free public PeerJS server is only used
-  // to find each other. Add ?peer=host:port to use your own PeerJS server.
+  // directly with WebRTC (PeerJS) when their networks allow it, and otherwise
+  // through the relay in relay.js. Add ?peer=host:port to use your own PeerJS
+  // server, or ?transport=relay to skip WebRTC entirely.
   const PEER_PREFIX = 'manhattan-mogul-v1-';
   const PARAMS = new URLSearchParams(location.search);
+  const FORCE_RELAY = PARAMS.get('transport') === 'relay';
+  const RTC_GRACE_MS = 4000; // how long a direct link gets before the relay is tried too
   const peerOpts = (() => {
     const p = PARAMS.get('peer');
     if (!p) return {};
@@ -81,8 +84,10 @@
   // Back to the home screen, dropping all connections.
   function resetNet() {
     clearTimeout(net.retry);
-    const peer = net.peer;
-    Object.assign(net, { role: null, peer: null, conn: null, game: null, conns: new Map(), myId: null, code: null, attempts: 0 });
+    const { peer, relay, conn } = net;
+    Object.assign(net, { role: null, peer: null, conn: null, game: null, conns: new Map(), myId: null, code: null, attempts: 0, relay: null, viaRelay: false, rtcFail: null });
+    if (conn && conn.relay) conn.close();
+    if (relay) relay.close();
     if (peer) setTimeout(() => peer.destroy(), 300);
     session.clear();
     S = null; ui.modal = null; ui.chat = [];
@@ -98,11 +103,13 @@
   }
   const cmd = (obj) => { ui.modal = null; raw({ type: 'cmd', ...obj }); };
 
-  function openPeer(id) {
+  function openPeer(id, timeoutMs = 10000) {
     return new Promise((resolve, reject) => {
+      if (typeof Peer === 'undefined') return reject({ type: 'unsupported' });
       const peer = id ? new Peer(id, peerOpts) : new Peer(peerOpts);
-      const onErr = (e) => { peer.off('open', onOpen); peer.destroy(); reject(e); };
-      const onOpen = () => { peer.off('error', onErr); resolve(peer); };
+      const onErr = (e) => { clearTimeout(timer); peer.off('open', onOpen); peer.destroy(); reject(e); };
+      const onOpen = () => { clearTimeout(timer); peer.off('error', onErr); resolve(peer); };
+      const timer = setTimeout(() => onErr({ type: 'timeout' }), timeoutMs);
       peer.once('open', onOpen);
       peer.once('error', onErr);
     });
@@ -114,24 +121,31 @@
     return Array.from({ length: 4 }, () => letters[Math.floor(Math.random() * letters.length)]).join('');
   }
 
+  // Players reach the host two ways at once: a direct WebRTC link (PeerJS) and
+  // the relay (relay.js). Both kinds of connection are handled the same way.
   async function hostStart(name, saved) {
     showConn(saved ? 'Restoring your game…' : 'Creating game…');
     let peer = null, code = saved ? saved.code : newCode();
-    for (let tries = 0; !peer; tries++) {
-      try {
-        peer = await openPeer(PEER_PREFIX + code);
-      } catch (e) {
-        if (e.type === 'unavailable-id' && tries < 8) {
-          if (saved) await sleep(2000); else code = newCode();
-          continue;
+    if (!FORCE_RELAY) {
+      for (let tries = 0; !peer; tries++) {
+        try {
+          peer = await openPeer(PEER_PREFIX + code);
+        } catch (e) {
+          if (e.type === 'unavailable-id' && tries < 8) {
+            if (saved) await sleep(2000); else code = newCode();
+            continue;
+          }
+          // No direct connections (PeerJS server down or blocked): the relay still works.
+          console.warn('PeerJS unavailable, players will use the relay', e.type || e);
+          break;
         }
-        showConn(null);
-        toast(e.type === 'network' || e.type === 'server-error' || e.type === 'socket-error'
-          ? 'Could not reach the connection server. Check your internet and try again.'
-          : `Could not start the game (${e.type || e.message})`, 'err');
-        if (saved) session.clear();
-        return;
       }
+    }
+    if (!peer && !window.MMRelay.available) {
+      showConn(null);
+      toast('Could not reach the connection server. Check your internet and try again.', 'err');
+      if (saved) session.clear();
+      return;
     }
     showConn(null);
     const g = new Game(code);
@@ -144,18 +158,37 @@
     } else {
       net.myId = g.addPlayer(name, newToken()).id;
     }
-    Object.assign(net, { role: 'host', peer, game: g, code, conns: new Map() });
-    peer.on('connection', (conn) => {
-      conn.on('data', (msg) => hostHandle(conn, msg));
-      conn.on('close', () => hostDetach(conn));
-      conn.on('error', () => hostDetach(conn));
-    });
-    peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => peer.reconnect(), 1000); });
-    peer.on('error', (e) => console.warn('peer error', e.type));
+    Object.assign(net, { role: 'host', peer, game: g, code, conns: new Map(), relay: null });
+    if (peer) {
+      peer.on('connection', hostAccept);
+      peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => { if (!peer.destroyed) peer.reconnect(); }, 1000); });
+      peer.on('error', (e) => console.warn('peer error', e.type));
+    }
+    if (window.MMRelay.available) net.relay = window.MMRelay.listen(code, hostAccept);
+    setTimeout(() => {
+      if (net.role !== 'host' || net.code !== code) return;
+      if (!(net.peer && net.peer.open) && !(net.relay && net.relay.connected())) {
+        toast('Having trouble reaching the connection servers. Players may not be able to join yet.', 'err');
+      }
+    }, 10000);
     const me = g.player(net.myId);
     onMessage({ type: 'joined', code, playerId: me.id, token: me.token });
     hostBroadcast();
   }
+
+  function hostAccept(conn) {
+    conn.on('data', (msg) => hostHandle(conn, msg));
+    conn.on('close', () => hostDetach(conn));
+    conn.on('error', () => hostDetach(conn));
+  }
+
+  // When this tab goes away (reload, close), tell relay players right away so
+  // they start reconnecting instead of waiting for the keepalive to time out.
+  window.addEventListener('pagehide', () => {
+    if (net.relay) net.relay.close();
+    else if (net.conn && net.conn.relay) net.conn.close();
+  });
+  window.addEventListener('pageshow', (e) => { if (e.persisted && session.load()) location.reload(); });
 
   function deliver(to, msg) {
     if (to === 'local') queueMicrotask(() => onMessage(msg));
@@ -244,38 +277,86 @@
 
   // ----- guest side -----
   function guestStart(code, name) {
-    Object.assign(net, { role: 'guest', code, name, attempts: 0 });
+    Object.assign(net, { role: 'guest', code, name, attempts: 0, viaRelay: FORCE_RELAY || !!store.get('mm-via-relay') });
     showConn('Connecting to host…');
     guestConnect();
   }
 
-  function guestConnect() {
-    if (net.role !== 'guest') return;
-    if (!net.peer || net.peer.destroyed) {
-      openPeer(null).then((peer) => {
-        if (net.role !== 'guest') { peer.destroy(); return; }
-        net.peer = peer;
-        peer.on('error', onGuestError);
-        peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => peer.reconnect(), 1000); });
-        guestDial();
-      }, () => guestRetry());
-    } else if (net.peer.open) {
-      guestDial();
-    } else {
-      guestRetry();
+  function guestPeer() {
+    if (FORCE_RELAY) return Promise.reject({ type: 'disabled' });
+    if (net.peer && net.peer.open) return Promise.resolve(net.peer);
+    if (net.peer && !net.peer.destroyed) {
+      // Signalling socket dropped: try to get it back for next time, use the relay now.
+      try { net.peer.reconnect(); } catch {}
+      return Promise.reject({ type: 'disconnected' });
     }
+    return openPeer(null, 8000).then((peer) => {
+      if (net.role !== 'guest') { peer.destroy(); throw { type: 'stale' }; }
+      net.peer = peer;
+      peer.on('error', (e) => { if (net.rtcFail) net.rtcFail(e); });
+      return peer;
+    });
   }
 
-  function guestDial() {
-    const conn = net.peer.connect(PEER_PREFIX + net.code, { reliable: true, serialization: 'json' });
-    net.conn = conn;
-    conn.on('open', () => {
+  // Dial the host. A direct WebRTC link is tried first; if it isn't open within
+  // a few seconds (or can't be made at all), the relay is tried too. Whichever
+  // opens first is used. If neither reaches the host, we retry or give up.
+  function guestConnect() {
+    if (net.role !== 'guest') return;
+    clearTimeout(net.retry);
+    const attempt = net.attempt = (net.attempt || 0) + 1;
+    const live = () => net.role === 'guest' && net.attempt === attempt;
+    let done = false, rtc = null, relayStarted = false;
+
+    const use = (conn) => {
+      if (done || !live()) { conn.close(); return; }
+      done = true;
+      clearTimeout(relayTimer);
+      net.rtcFail = null;
+      if (rtc && rtc !== conn) rtc.close();
+      net.conn = conn;
+      net.viaRelay = !!conn.relay;
+      store.set('mm-via-relay', net.viaRelay); // on rejoin, start the relay right away
       showConn(null);
+      conn.on('data', onMessage);
+      conn.on('close', () => { if (net.conn === conn) { net.conn = null; guestRetry(); } });
       const s = session.load();
       conn.send({ type: 'join', name: net.name, token: s && s.code === net.code ? s.token : undefined });
-    });
-    conn.on('data', onMessage);
-    conn.on('close', () => { if (net.conn === conn) { net.conn = null; guestRetry(); } });
+    };
+
+    const fail = (e) => {
+      if (done || !live()) return;
+      done = true;
+      clearTimeout(relayTimer);
+      net.rtcFail = null;
+      if (rtc) rtc.close();
+      if (e && e.type === 'peer-unavailable') {
+        // No host answered. Keep trying if we were already in a game (host may be reloading).
+        net.attempts++;
+        if (S || (rejoining && net.attempts < 6)) return guestRetry();
+        toast('No game found with that code. The host must keep their game page open.', 'err');
+        rejoining = false;
+        resetNet();
+        return;
+      }
+      guestRetry();
+    };
+
+    const startRelay = () => {
+      if (relayStarted || done || !live()) return;
+      relayStarted = true;
+      if (!window.MMRelay.available) { setTimeout(() => fail({ type: 'network' }), RTC_GRACE_MS * 2); return; }
+      window.MMRelay.connect(net.code).then(use, fail);
+    };
+    const relayTimer = setTimeout(startRelay, net.viaRelay ? 0 : RTC_GRACE_MS);
+
+    net.rtcFail = (e) => { if (live() && !done) { console.warn('direct link failed', e && e.type); startRelay(); } };
+    guestPeer().then((peer) => {
+      if (done || !live()) return;
+      rtc = peer.connect(PEER_PREFIX + net.code, { reliable: true, serialization: 'json' });
+      rtc.on('open', () => use(rtc));
+      rtc.on('error', (e) => { if (net.conn !== rtc && net.rtcFail) net.rtcFail(e); });
+    }, (e) => { if (live() && net.rtcFail) net.rtcFail(e); });
   }
 
   function guestRetry() {
@@ -283,19 +364,6 @@
     showConn('Reconnecting to host…');
     clearTimeout(net.retry);
     net.retry = setTimeout(guestConnect, 2500);
-  }
-
-  function onGuestError(e) {
-    if (e.type === 'peer-unavailable') {
-      // Host not online. Keep trying if we were already in a game (host may be reloading).
-      net.attempts++;
-      if (S || (rejoining && net.attempts < 6)) return guestRetry();
-      toast('No game found with that code. The host must keep their game page open.', 'err');
-      rejoining = false;
-      resetNet();
-      return;
-    }
-    guestRetry();
   }
 
   // ---------- state helpers ----------
